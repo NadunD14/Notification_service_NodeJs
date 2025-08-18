@@ -42,14 +42,7 @@ function extractToken(req) {
     return null;
 }
 
-const BYPASS = process.env.SKIP_ADMIN_AUTH === 'true';
-
 const authenticateAdmin = (req, res, next) => {
-    if (BYPASS) {
-        req.user = { userId: 'dev-admin', userType: 'admin', bypass: true };
-        return next();
-    }
-
     const token = extractToken(req);
     if (!token) {
         return res.status(401).json({ message: 'No authentication token, access denied', code: 'NO_TOKEN' });

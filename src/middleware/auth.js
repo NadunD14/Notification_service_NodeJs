@@ -57,7 +57,9 @@ const authenticateAdmin = (req, res, next) => {
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
         req.user = decoded;
 
-        if (req.user.userType !== 'admin') {
+        console.log('Authenticated userrrrr:', req.user.user_metadata.user_role);
+
+        if (req.user.user_metadata.user_role !== 'Admin') {
             return res.status(403).json({ message: 'Not authorized', code: 'NOT_ADMIN' });
         }
 

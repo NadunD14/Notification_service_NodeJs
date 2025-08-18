@@ -26,6 +26,8 @@ class NotificationService {
             route = null
         } = targetCriteria;
 
+        console.log('🎯 Target Criteria:', targetCriteria);
+
         // Start with base query for user type
         let keyConditionExpression = 'userType = :userType';
         let expressionAttributeValues = { ':userType': userType };
@@ -48,47 +50,56 @@ class NotificationService {
             expressionAttributeValues[':route'] = route;
         }
 
-        // Get users matching the criteria
-        const params = {
-            TableName: this.usersTable,
-            IndexName: 'userType-index',
-            KeyConditionExpression: keyConditionExpression,
-            ExpressionAttributeValues: expressionAttributeValues
-        };
+        console.log('🔍 Query params:', {
+            keyConditionExpression,
+            expressionAttributeValues,
+            filterExpression: filterExpression.join(' AND ')
+        });
 
-        if (filterExpression.length > 0) {
-            params.FilterExpression = filterExpression.join(' AND ');
-        }
 
         // Query for matching users
         const users = await dynamoHelpers.queryItems(
             this.usersTable,
             'userType-index',
             keyConditionExpression,
-            expressionAttributeValues
+            expressionAttributeValues,
+            filterExpression.length > 0 ? filterExpression.join(' AND ') : undefined
         );
 
+        console.log(`👥 Found ${users?.length || 0} matching users`);
+
         if (!users || users.length === 0) {
+            console.log('❌ No users found matching criteria');
             return [];
         }
 
         // Get all user IDs
         const userIds = users.map(user => user.userId);
+        console.log('📋 User IDs:', userIds);
 
         // Get subscriptions for these users
-        // Note: For large numbers of users, we would need to batch this operation
         const allSubscriptions = [];
         for (const userId of userIds) {
-            const subscriptions = await dynamoHelpers.queryItems(
-                this.subscriptionsTable,
-                'userId-index',
-                'userId = :userId',
-                { ':userId': userId }
-            );
+            try {
+                const subscriptions = await dynamoHelpers.queryItems(
+                    this.subscriptionsTable,
+                    'userId-index',
+                    'userId = :userId',
+                    { ':userId': userId }
+                );
 
-            allSubscriptions.push(...subscriptions);
+                if (subscriptions && subscriptions.length > 0) {
+                    console.log(`📱 User ${userId} has ${subscriptions.length} subscriptions`);
+                    allSubscriptions.push(...subscriptions);
+                } else {
+                    console.log(`📱 User ${userId} has no subscriptions`);
+                }
+            } catch (error) {
+                console.error(`❌ Error fetching subscriptions for user ${userId}:`, error);
+            }
         }
 
+        console.log(`📊 Total subscriptions found: ${allSubscriptions.length}`);
         return allSubscriptions;
     }
 
@@ -98,6 +109,8 @@ class NotificationService {
      * @returns {Promise<object>} - The created notification
      */
     async createNotification(notificationData) {
+        console.log('📝 Creating notification with data:', notificationData);
+
         const {
             adminId,
             title,
@@ -131,7 +144,15 @@ class NotificationService {
             },
             clickCount: 0
         };
-        return dynamoHelpers.createItem(this.notificationsTable, notification);
+
+        try {
+            const result = await dynamoHelpers.createItem(this.notificationsTable, notification);
+            console.log('✅ Notification created successfully:', notificationId);
+            return result;
+        } catch (error) {
+            console.error('❌ Error creating notification:', error);
+            throw error;
+        }
     }
 
     /**
@@ -141,11 +162,21 @@ class NotificationService {
      * @returns {Promise<object>} - Stats about the notification delivery
      */
     async sendNotification(notification, subscriptions) {
+        console.log(`🚀 Starting to send notification ${notification.notificationId} to ${subscriptions.length} subscriptions`);
 
         let successful = 0;
         let failed = 0;
 
-        for (const subscription of subscriptions) {
+        // Check if webpush is properly configured
+        if (!webpush) {
+            console.error('❌ WebPush is not properly configured');
+            throw new Error('WebPush configuration missing');
+        }
+
+        for (let i = 0; i < subscriptions.length; i++) {
+            const subscription = subscriptions[i];
+            console.log(`📤 Sending notification ${i + 1}/${subscriptions.length} to subscription ${subscription.subscriptionId}`);
+
             try {
                 const payload = {
                     title: notification.title,
@@ -160,35 +191,79 @@ class NotificationService {
                     }
                 };
 
+                console.log('📦 Payload:', JSON.stringify(payload, null, 2));
+
+                // Handle different subscription formats
+                let pushSubscription;
+                if (subscription.endpoint) {
+                    // Direct subscription object
+                    pushSubscription = subscription;
+                } else if (subscription.subscription) {
+                    // Subscription stored as JSON string
+                    try {
+                        pushSubscription = JSON.parse(subscription.subscription);
+                    } catch (parseError) {
+                        console.error(`❌ Error parsing subscription JSON for ${subscription.subscriptionId}:`, parseError);
+                        failed++;
+                        continue;
+                    }
+                } else {
+                    console.error(`❌ Invalid subscription format for ${subscription.subscriptionId}`);
+                    failed++;
+                    continue;
+                }
+
+                console.log('🔗 Push subscription endpoint:', pushSubscription.endpoint?.substring(0, 50) + '...');
+
                 await webpush.sendNotification(
-                    subscription.endpoint ? subscription : JSON.parse(subscription.subscription),
+                    pushSubscription,
                     JSON.stringify(payload)
                 );
+
                 successful++;
+                console.log(`✅ Successfully sent notification to subscription ${subscription.subscriptionId}`);
+
             } catch (error) {
                 failed++;
-                console.error(`Failed to send notification to subscription: ${subscription.subscriptionId}`, error);
+                console.error(`❌ Failed to send notification to subscription ${subscription.subscriptionId}:`, {
+                    error: error.message,
+                    statusCode: error.statusCode,
+                    body: error.body
+                });
 
-                // Remove invalid subscriptions
+                // Remove invalid subscriptions (410 = Gone)
                 if (error.statusCode === 410) {
-                    await dynamoHelpers.deleteItem(this.subscriptionsTable, {
-                        subscriptionId: subscription.subscriptionId
-                    });
+                    console.log(`🗑️ Removing invalid subscription ${subscription.subscriptionId}`);
+                    try {
+                        await dynamoHelpers.deleteItem(this.subscriptionsTable, {
+                            subscriptionId: subscription.subscriptionId
+                        });
+                        console.log(`✅ Removed invalid subscription ${subscription.subscriptionId}`);
+                    } catch (deleteError) {
+                        console.error(`❌ Error removing invalid subscription ${subscription.subscriptionId}:`, deleteError);
+                    }
                 }
             }
         }
 
+        console.log(`📊 Notification sending complete. Successful: ${successful}, Failed: ${failed}`);
+
         // Update notification stats
-        await dynamoHelpers.updateItem(
-            this.notificationsTable,
-            { notificationId: notification.notificationId },
-            'SET stats.successful = :s, stats.failed = :f, stats.totalSent = :t',
-            {
-                ':s': successful,
-                ':f': failed,
-                ':t': successful + failed
-            }
-        );
+        try {
+            await dynamoHelpers.updateItem(
+                this.notificationsTable,
+                { notificationId: notification.notificationId },
+                'SET stats.successful = :s, stats.failed = :f, stats.totalSent = :t',
+                {
+                    ':s': successful,
+                    ':f': failed,
+                    ':t': successful + failed
+                }
+            );
+            console.log(`✅ Updated notification stats for ${notification.notificationId}`);
+        } catch (error) {
+            console.error(`❌ Error updating notification stats:`, error);
+        }
 
         return {
             notificationId: notification.notificationId,
@@ -198,18 +273,28 @@ class NotificationService {
         };
     }
 
+
+
     /**
      * Process a notification click
      * @param {string} notificationId - The notification ID
      * @returns {Promise<object>} - The updated notification
      */
     async recordNotificationClick(notificationId) {
-        return dynamoHelpers.updateItem(
-            this.notificationsTable,
-            { notificationId },
-            'ADD clickCount :inc',
-            { ':inc': 1 }
-        );
+        try {
+            console.log(`🖱️ Recording click for notification ${notificationId}`);
+            const result = await dynamoHelpers.updateItem(
+                this.notificationsTable,
+                { notificationId },
+                'ADD clickCount :inc',
+                { ':inc': 1 }
+            );
+            console.log(`✅ Click recorded for notification ${notificationId}`);
+            return result;
+        } catch (error) {
+            console.error(`❌ Error recording click for notification ${notificationId}:`, error);
+            throw error;
+        }
     }
 
     /**
@@ -218,28 +303,62 @@ class NotificationService {
      * @returns {Promise<object|null>} - The notification details or null if not found
      */
     async getNotificationDetails(notificationId) {
-        const item = await dynamoHelpers.getItem(
-            this.notificationsTable,
-            { notificationId }
-        );
-        return item || null;
+        try {
+            const item = await dynamoHelpers.getItem(
+                this.notificationsTable,
+                { notificationId }
+            );
+            return item || null;
+        } catch (error) {
+            console.error(`❌ Error getting notification details for ${notificationId}:`, error);
+            throw error;
+        }
     }
 
     /**
-     * List recent notifications (basic fields) ordered by sentAt descending (client can sort if Dynamo not indexed)
-     * NOTE: For production, create a GSI on sentAt to efficiently query; scan used here for simplicity.
+     * List recent notifications (basic fields) ordered by sentAt descending
      * @param {number} limit
      */
     async listRecentNotifications(limit = 50) {
-        const items = await dynamoHelpers.listItems(this.notificationsTable, { limit });
-        // Sort descending by sentAt timestamp
-        items.sort((a, b) => (b.sentAt || '').localeCompare(a.sentAt || ''));
-        return items.map(n => ({
-            notificationId: n.notificationId,
-            title: n.title,
-            content: n.body, // mapping body -> content for frontend expectation
-            dateCreated: n.sentAt
-        }));
+        try {
+            const items = await dynamoHelpers.listItems(this.notificationsTable, { limit });
+            // Sort descending by sentAt timestamp
+            items.sort((a, b) => (b.sentAt || '').localeCompare(a.sentAt || ''));
+            return items.map(n => ({
+                notificationId: n.notificationId,
+                title: n.title,
+                content: n.body,
+                dateCreated: n.sentAt,
+                stats: n.stats
+            }));
+        } catch (error) {
+            console.error('❌ Error listing recent notifications:', error);
+            throw error;
+        }
+    }
+
+    /**
+     * Debug method to check system status
+     */
+    async debugSystemStatus() {
+        console.log('🔍 Debugging notification system status...');
+
+        try {
+            // Check tables exist and have data
+            const userCount = await dynamoHelpers.listItems(this.usersTable, { limit: 1 });
+            const subscriptionCount = await dynamoHelpers.listItems(this.subscriptionsTable, { limit: 1 });
+            const notificationCount = await dynamoHelpers.listItems(this.notificationsTable, { limit: 1 });
+
+            console.log('📊 System Status:', {
+                usersTableAccessible: userCount !== null,
+                subscriptionsTableAccessible: subscriptionCount !== null,
+                notificationsTableAccessible: notificationCount !== null,
+                webpushConfigured: !!webpush
+            });
+
+        } catch (error) {
+            console.error('❌ Error checking system status:', error);
+        }
     }
 }
 

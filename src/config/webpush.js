@@ -12,7 +12,7 @@ if (!publicKey || !privateKey) {
 }
 
 webpush.setVapidDetails(
-    `mailto:${process.env.VAPID_CONTACT_EMAIL || 'example@yourdomain.com'}`,
+    `mailto:${process.env.VAPID_CONTACT_EMAIL}`,
     publicKey,
     privateKey
 );

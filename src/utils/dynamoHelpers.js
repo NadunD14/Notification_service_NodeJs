@@ -51,7 +51,7 @@ const updateItem = async (tableName, key, updateExpression, expressionAttributeV
  * @param {object} expressionAttributeValues - The expression attribute values
  * @returns {Promise} - The query results
  */
-const queryItems = async (tableName, indexName, keyConditionExpression, expressionAttributeValues) => {
+const queryItems = async (tableName, indexName, keyConditionExpression, expressionAttributeValues, filterExpression) => {
     const params = {
         TableName: tableName,
         KeyConditionExpression: keyConditionExpression,
@@ -60,6 +60,10 @@ const queryItems = async (tableName, indexName, keyConditionExpression, expressi
 
     if (indexName) {
         params.IndexName = indexName;
+    }
+
+    if (filterExpression) {
+        params.FilterExpression = filterExpression;
     }
 
     const result = await dynamoDb.query(params).promise();

@@ -1,5 +1,5 @@
 // src/controllers/notificationController.js
-
+const { extractToken } = require('../middleware/auth');
 const notificationService = require('../services/notificationService');
 
 /**
@@ -9,8 +9,9 @@ const notificationService = require('../services/notificationService');
  */
 const sendNotification = async (req, res) => {
 
+    // const token = extractToken(req);  // Extract token using extractToken function
 
-    console.log('Received request to send notification:', req.body);
+    console.log('Received request to send notification:', req.user);
     try {
         const {
             title,
@@ -49,7 +50,7 @@ const sendNotification = async (req, res) => {
 
         // Create notification record
         const notification = await notificationService.createNotification({
-            adminId: req.user.userId,
+            adminId: '42832827-db62-47a1-b198-08993c07ad11',
             title,
             subject,
             body,

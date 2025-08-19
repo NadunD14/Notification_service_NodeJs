@@ -149,16 +149,39 @@ class NotificationService {
                     // Direct subscription object
                     pushSubscription = subscription;
                 } else if (subscription.subscription) {
-                    // Subscription stored as JSON string
-                    try {
-                        pushSubscription = JSON.parse(subscription.subscription);
-                    } catch (parseError) {
-                        console.error(`❌ Error parsing subscription JSON for ${subscription.subscriptionId}:`, parseError);
+                    // Check if subscription is already an object
+                    if (typeof subscription.subscription === 'object') {
+                        pushSubscription = subscription.subscription;
+                    } else if (typeof subscription.subscription === 'string') {
+                        // Only try to parse if it's actually a string
+                        // Check if it's the problematic "[object Object]" string
+                        if (subscription.subscription === '[object Object]') {
+                            console.error(`❌ Invalid subscription data (object toString) for ${subscription.subscriptionId}`);
+                            failed++;
+                            continue;
+                        }
+
+                        try {
+                            pushSubscription = JSON.parse(subscription.subscription);
+                        } catch (parseError) {
+                            console.error(`❌ Error parsing subscription JSON for ${subscription.subscriptionId}:`, parseError);
+                            failed++;
+                            continue;
+                        }
+                    } else {
+                        console.error(`❌ Unexpected subscription data type for ${subscription.subscriptionId}: ${typeof subscription.subscription}`);
                         failed++;
                         continue;
                     }
                 } else {
                     console.error(`❌ Invalid subscription format for ${subscription.subscriptionId}`);
+                    failed++;
+                    continue;
+                }
+
+                // Validate that we have the required fields
+                if (!pushSubscription || !pushSubscription.endpoint) {
+                    console.error(`❌ Missing endpoint in subscription for ${subscription.subscriptionId}`);
                     failed++;
                     continue;
                 }

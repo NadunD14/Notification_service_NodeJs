@@ -8,6 +8,8 @@ const notificationService = require('../services/notificationService');
  * @param {object} res - Express response object
  */
 const sendNotification = async (req, res) => {
+
+
     console.log('Received request to send notification:', req.body);
     try {
         const {
@@ -43,6 +45,7 @@ const sendNotification = async (req, res) => {
                 message: `Invalid targetAudience. Must be one of: ${validAudiences.join(', ')}`
             });
         }
+
 
         // Create notification record
         const notification = await notificationService.createNotification({

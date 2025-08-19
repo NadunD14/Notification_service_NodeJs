@@ -42,8 +42,11 @@ function extractToken(req) {
     return null;
 }
 
+/**
+ * Middleware to authenticate admin user based on JWT token
+ */
 const authenticateAdmin = (req, res, next) => {
-    const token = extractToken(req);
+    const token = extractToken(req);  // Extract token using extractToken function
     if (!token) {
         return res.status(401).json({ message: 'No authentication token, access denied', code: 'NO_TOKEN' });
     }
@@ -54,16 +57,17 @@ const authenticateAdmin = (req, res, next) => {
             return res.status(500).json({ message: 'Server auth configuration error', code: 'SERVER_CONFIG' });
         }
 
-        const decoded = jwt.verify(token, process.env.JWT_SECRET);
-        req.user = decoded;
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);  // Verify and decode token
+        req.user = decoded;  // Attach decoded user data to req.user
 
-        console.log('Authenticated userrrrr:', req.user.user_metadata.user_role);
+        console.log('Authenticated user:', req.user.user_metadata.user_role);
 
+        // Check if the user is an admin
         if (req.user.user_metadata.user_role !== 'Admin') {
             return res.status(403).json({ message: 'Not authorized', code: 'NOT_ADMIN' });
         }
 
-        return next();
+        return next();  // Proceed to the next middleware or route handler
     } catch (error) {
         let code = 'TOKEN_INVALID';
         let message = 'Token is invalid';

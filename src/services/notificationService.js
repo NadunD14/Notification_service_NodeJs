@@ -1,17 +1,16 @@
 // src/services/notificationService.js
 
 const webpush = require('../config/webpush');
-const dynamoHelpers = require('../utils/dynamoHelpers');
+const { v4: uuidv4 } = require('uuid');
+const User = require('../models/User');
+const Subscription = require('../models/Subscription');
+const Notification = require('../models/Notification');
 
 /**
  * Service for handling notifications
  */
 class NotificationService {
-    constructor() {
-        this.usersTable = 'Users';
-        this.subscriptionsTable = 'Subscriptions';
-        this.notificationsTable = 'Notifications';
-    }
+    constructor() { }
 
     /**
      * Get subscriptions by user type, location, and route
@@ -28,43 +27,15 @@ class NotificationService {
 
         console.log('🎯 Target Criteria:', targetCriteria);
 
-        // Start with base query for user type
-        let keyConditionExpression = 'userType = :userType';
-        let expressionAttributeValues = { ':userType': userType };
+        const query = {};
+        if (userType) query.userType = userType; // if null => all
+        if (province) query.province = province;
+        if (city) query.city = city;
+        if (route) query.route = route;
 
-        // Add filter expression if location filters are specified
-        let filterExpression = [];
+        console.log('🔍 Mongo query for users:', query);
 
-        if (province) {
-            filterExpression.push('province = :province');
-            expressionAttributeValues[':province'] = province;
-        }
-
-        if (city) {
-            filterExpression.push('city = :city');
-            expressionAttributeValues[':city'] = city;
-        }
-
-        if (route) {
-            filterExpression.push('route = :route');
-            expressionAttributeValues[':route'] = route;
-        }
-
-        console.log('🔍 Query params:', {
-            keyConditionExpression,
-            expressionAttributeValues,
-            filterExpression: filterExpression.join(' AND ')
-        });
-
-
-        // Query for matching users
-        const users = await dynamoHelpers.queryItems(
-            this.usersTable,
-            'userType-index',
-            keyConditionExpression,
-            expressionAttributeValues,
-            filterExpression.length > 0 ? filterExpression.join(' AND ') : undefined
-        );
+        const users = await User.find(query).lean();
 
         console.log(`👥 Found ${users?.length || 0} matching users`);
 
@@ -77,30 +48,9 @@ class NotificationService {
         const userIds = users.map(user => user.userId);
         console.log('📋 User IDs:', userIds);
 
-        // Get subscriptions for these users
-        const allSubscriptions = [];
-        for (const userId of userIds) {
-            try {
-                const subscriptions = await dynamoHelpers.queryItems(
-                    this.subscriptionsTable,
-                    'userId-index',
-                    'userId = :userId',
-                    { ':userId': userId }
-                );
-
-                if (subscriptions && subscriptions.length > 0) {
-                    console.log(`📱 User ${userId} has ${subscriptions.length} subscriptions`);
-                    allSubscriptions.push(...subscriptions);
-                } else {
-                    console.log(`📱 User ${userId} has no subscriptions`);
-                }
-            } catch (error) {
-                console.error(`❌ Error fetching subscriptions for user ${userId}:`, error);
-            }
-        }
-
-        console.log(`📊 Total subscriptions found: ${allSubscriptions.length}`);
-        return allSubscriptions;
+        const subscriptions = await Subscription.find({ userId: { $in: userIds } }).lean();
+        console.log(`📊 Total subscriptions found: ${subscriptions.length}`);
+        return subscriptions;
     }
 
     /**
@@ -123,7 +73,7 @@ class NotificationService {
             route
         } = notificationData;
 
-        const notificationId = dynamoHelpers.generateUniqueId();
+        const notificationId = uuidv4();
 
         const notification = {
             notificationId,
@@ -146,9 +96,9 @@ class NotificationService {
         };
 
         try {
-            const result = await dynamoHelpers.createItem(this.notificationsTable, notification);
+            const created = await Notification.create(notification);
             console.log('✅ Notification created successfully:', notificationId);
-            return result;
+            return created.toObject();
         } catch (error) {
             console.error('❌ Error creating notification:', error);
             throw error;
@@ -232,12 +182,10 @@ class NotificationService {
                 });
 
                 // Remove invalid subscriptions (410 = Gone)
-                if (error.statusCode === 410) {
+                if (error.statusCode === 410 && subscription.subscriptionId) {
                     console.log(`🗑️ Removing invalid subscription ${subscription.subscriptionId}`);
                     try {
-                        await dynamoHelpers.deleteItem(this.subscriptionsTable, {
-                            subscriptionId: subscription.subscriptionId
-                        });
+                        await Subscription.deleteOne({ subscriptionId: subscription.subscriptionId });
                         console.log(`✅ Removed invalid subscription ${subscription.subscriptionId}`);
                     } catch (deleteError) {
                         console.error(`❌ Error removing invalid subscription ${subscription.subscriptionId}:`, deleteError);
@@ -250,15 +198,9 @@ class NotificationService {
 
         // Update notification stats
         try {
-            await dynamoHelpers.updateItem(
-                this.notificationsTable,
+            await Notification.updateOne(
                 { notificationId: notification.notificationId },
-                'SET stats.successful = :s, stats.failed = :f, stats.totalSent = :t',
-                {
-                    ':s': successful,
-                    ':f': failed,
-                    ':t': successful + failed
-                }
+                { $set: { 'stats.successful': successful, 'stats.failed': failed, 'stats.totalSent': successful + failed } }
             );
             console.log(`✅ Updated notification stats for ${notification.notificationId}`);
         } catch (error) {
@@ -283,12 +225,11 @@ class NotificationService {
     async recordNotificationClick(notificationId) {
         try {
             console.log(`🖱️ Recording click for notification ${notificationId}`);
-            const result = await dynamoHelpers.updateItem(
-                this.notificationsTable,
+            const result = await Notification.findOneAndUpdate(
                 { notificationId },
-                'ADD clickCount :inc',
-                { ':inc': 1 }
-            );
+                { $inc: { clickCount: 1 } },
+                { new: true }
+            ).lean();
             console.log(`✅ Click recorded for notification ${notificationId}`);
             return result;
         } catch (error) {
@@ -304,10 +245,7 @@ class NotificationService {
      */
     async getNotificationDetails(notificationId) {
         try {
-            const item = await dynamoHelpers.getItem(
-                this.notificationsTable,
-                { notificationId }
-            );
+            const item = await Notification.findOne({ notificationId }).lean();
             return item || null;
         } catch (error) {
             console.error(`❌ Error getting notification details for ${notificationId}:`, error);
@@ -321,9 +259,7 @@ class NotificationService {
      */
     async listRecentNotifications(limit = 50) {
         try {
-            const items = await dynamoHelpers.listItems(this.notificationsTable, { limit });
-            // Sort descending by sentAt timestamp
-            items.sort((a, b) => (b.sentAt || '').localeCompare(a.sentAt || ''));
+            const items = await Notification.find({}, null, { sort: { sentAt: -1 }, limit }).lean();
             return items.map(n => ({
                 notificationId: n.notificationId,
                 title: n.title,
@@ -344,18 +280,15 @@ class NotificationService {
         console.log('🔍 Debugging notification system status...');
 
         try {
-            // Check tables exist and have data
-            const userCount = await dynamoHelpers.listItems(this.usersTable, { limit: 1 });
-            const subscriptionCount = await dynamoHelpers.listItems(this.subscriptionsTable, { limit: 1 });
-            const notificationCount = await dynamoHelpers.listItems(this.notificationsTable, { limit: 1 });
-
+            const userCount = await User.countDocuments();
+            const subscriptionCount = await Subscription.countDocuments();
+            const notificationCount = await Notification.countDocuments();
             console.log('📊 System Status:', {
-                usersTableAccessible: userCount !== null,
-                subscriptionsTableAccessible: subscriptionCount !== null,
-                notificationsTableAccessible: notificationCount !== null,
+                users: userCount,
+                subscriptions: subscriptionCount,
+                notifications: notificationCount,
                 webpushConfigured: !!webpush
             });
-
         } catch (error) {
             console.error('❌ Error checking system status:', error);
         }

@@ -3,10 +3,8 @@
 const express = require('express');
 const router = express.Router();
 const webpush = require('../config/webpush');
-const dynamoHelpers = require('../utils/dynamoHelpers');
 const { v4: uuidv4 } = require('uuid');
-
-const SUBSCRIPTIONS_TABLE = 'Subscriptions';
+const Subscription = require('../models/Subscription');
 
 function normalizeSubscriptionPayload(body) {
     // Expect either full Web Push subscription or { subscription: {...}, userId }
@@ -16,7 +14,7 @@ function normalizeSubscriptionPayload(body) {
     return sub;
 }
 
-// Subscribe (persist to DynamoDB)
+// Subscribe (persist to MongoDB)
 router.post('/subscribe', async (req, res) => {
     try {
         const { userId } = req.body; // optional user association
@@ -25,14 +23,11 @@ router.post('/subscribe', async (req, res) => {
             return res.status(400).json({ message: 'Invalid subscription payload' });
         }
 
-        // Check for existing identical subscription for same user
-        // Since we don't have a direct endpoint index, we store blindly; dedupe can be improved
-        const item = {
+        const item = await Subscription.create({
             subscriptionId: uuidv4(),
             userId: userId || 'ANONYMOUS',
-            subscription: JSON.stringify(subscription)
-        };
-        await dynamoHelpers.createItem(SUBSCRIPTIONS_TABLE, item);
+            subscription
+        });
         return res.status(200).json({ message: 'Subscription saved', subscriptionId: item.subscriptionId });
     } catch (error) {
         console.error('Error saving subscription:', error);
@@ -45,7 +40,7 @@ router.post('/unsubscribe', async (req, res) => {
     try {
         const { subscriptionId } = req.body;
         if (!subscriptionId) return res.status(400).json({ message: 'subscriptionId is required' });
-        await dynamoHelpers.deleteItem(SUBSCRIPTIONS_TABLE, { subscriptionId });
+        await Subscription.deleteOne({ subscriptionId });
         return res.status(200).json({ message: 'Subscription removed (if existed)' });
     } catch (error) {
         console.error('Error removing subscription:', error);
@@ -59,15 +54,9 @@ router.post('/send', async (req, res) => {
     try {
         let subs;
         if (userId) {
-            // query subscriptions by userId index
-            subs = await dynamoHelpers.queryItems(
-                SUBSCRIPTIONS_TABLE,
-                'userId-index',
-                'userId = :userId',
-                { ':userId': userId }
-            );
+            subs = await Subscription.find({ userId }).lean();
         } else {
-            subs = await dynamoHelpers.listItems(SUBSCRIPTIONS_TABLE, { limit: 500 });
+            subs = await Subscription.find({}).limit(500).lean();
         }
         if (!subs || subs.length === 0) return res.status(404).json({ message: 'No subscriptions found' });
 
@@ -80,13 +69,8 @@ router.post('/send', async (req, res) => {
         await Promise.all(subs.map(async sub => {
             try {
                 let pushSub;
-                if (sub.endpoint) {
-                    pushSub = sub;
-                } else if (sub.subscription) {
-                    let raw = sub.subscription;
-                    if (typeof raw === 'string') {
-                        try { pushSub = JSON.parse(raw); } catch (e) { malformed++; throw new Error('Malformed subscription JSON'); }
-                    } else { pushSub = raw; }
+                if (sub.subscription && typeof sub.subscription === 'object') {
+                    pushSub = sub.subscription;
                 } else {
                     malformed++; throw new Error('Invalid subscription format');
                 }
@@ -95,7 +79,7 @@ router.post('/send', async (req, res) => {
             } catch (err) {
                 failed++;
                 if (err.statusCode === 410 && sub.subscriptionId) {
-                    await dynamoHelpers.deleteItem(SUBSCRIPTIONS_TABLE, { subscriptionId: sub.subscriptionId });
+                    await Subscription.deleteOne({ subscriptionId: sub.subscriptionId });
                 }
                 console.error('Error sending notification:', err.statusCode, err.body || err.message);
             }

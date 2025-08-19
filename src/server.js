@@ -5,6 +5,7 @@ const cors = require('cors');
 const bodyParser = require('body-parser');
 const notificationRoutes = require('./routes/notificationRoutes');
 const pushRoutes = require('./routes/pushRoutes');
+const { connectMongo } = require('./config/mongodb');
 require('dotenv').config();
 
 // Initialize express
@@ -30,8 +31,13 @@ app.use((err, req, res, next) => {
     res.status(500).json({ message: 'Internal server error', error: err.message });
 });
 
-// Start server
+// Connect DB then start server
 const PORT = process.env.PORT || 3001;
-app.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
+connectMongo().then(() => {
+    app.listen(PORT, () => {
+        console.log(`Server running on port ${PORT}`);
+    });
+}).catch(err => {
+    console.error('Failed to start server due to Mongo connection error');
+    process.exit(1);
 });

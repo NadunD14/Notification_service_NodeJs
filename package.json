@@ -6,11 +6,10 @@
   "scripts": {
     "start": "node src/server.js",
     "dev": "nodemon src/server.js",
-    "generate-keys": "node generateVapidKeys.js",
-    "create-tables": "node setup/createDynamoDBTables.js"
+    "generate-keys": "node generateVapidKeys.js"
   },
   "dependencies": {
-    "aws-sdk": "^2.1481.0",
+    "mongoose": "^8.5.0",
     "body-parser": "^2.2.0",
     "cors": "^2.8.5",
     "dotenv": "^17.2.1",

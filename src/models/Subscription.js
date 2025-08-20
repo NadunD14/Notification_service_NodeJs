@@ -8,4 +8,7 @@ const subscriptionSchema = new mongoose.Schema({
     addedAt: { type: Date, default: Date.now }
 }, { timestamps: true });
 
+// Compound index for efficient duplicate checking
+subscriptionSchema.index({ 'subscription.endpoint': 1, userId: 1 });
+
 module.exports = mongoose.model('Subscription', subscriptionSchema);

@@ -16,6 +16,22 @@ app.use(cors());
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
+// Add request logging for debugging subscription issues (optional - only for development)
+if (process.env.NODE_ENV !== 'production') {
+    app.use((req, res, next) => {
+        if (req.path.includes('/api/push/')) {
+            console.log(`${new Date().toISOString()} - ${req.method} ${req.path}`);
+            if (req.headers.authorization) {
+                console.log('Authorization header present');
+            }
+            if (req.body && Object.keys(req.body).length > 0) {
+                console.log('Request body keys:', Object.keys(req.body));
+            }
+        }
+        next();
+    });
+}
+
 // Routes
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/push', pushRoutes);

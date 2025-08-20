@@ -23,11 +23,11 @@ router.post('/subscribe', async (req, res) => {
 
         console.log('Authenticated user:', req.user);
         console.log('User sub field:', req.user?.sub);
-        
+
         // Extract userId from the token - 'sub' field typically contains the user ID
         const userId = req.user?.sub || req.user?.userId || req.user?.id;
         console.log('Extracted userId:', userId);
-        
+
         const subscription = normalizeSubscriptionPayload(req.body);
         console.log('Subscription payload:', req.body);
         if (!subscription) {
@@ -39,7 +39,7 @@ router.post('/subscribe', async (req, res) => {
             userId: userId || 'ANONYMOUS',
             subscription
         });
-        
+
         console.log('Created subscription with userId:', userId || 'ANONYMOUS');
         return res.status(200).json({ message: 'Subscription saved', subscriptionId: item.subscriptionId });
     } catch (error) {

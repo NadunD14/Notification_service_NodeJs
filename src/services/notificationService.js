@@ -5,6 +5,7 @@ const { v4: uuidv4 } = require('uuid');
 const User = require('../models/User');
 const Subscription = require('../models/Subscription');
 const Notification = require('../models/Notification');
+const { sendEmail } = require('../utils/emailUtils');
 
 /**
  * Service for handling notifications
@@ -17,6 +18,10 @@ class NotificationService {
      * @param {object} targetCriteria - The targeting criteria
      * @returns {Promise<Array>} - Array of subscriptions
      */
+    // src/services/notificationService.js
+
+    // src/services/notificationService.js
+
     async getSubscriptionsByTargetCriteria(targetCriteria) {
         const {
             userType,
@@ -35,7 +40,8 @@ class NotificationService {
 
         console.log('🔍 Mongo query for users:', query);
 
-        const users = await User.find(query).lean();
+        // Find users and include their email
+        const users = await User.find(query, 'userId email').lean();
 
         console.log(`👥 Found ${users?.length || 0} matching users`);
 
@@ -48,9 +54,28 @@ class NotificationService {
         const userIds = users.map(user => user.userId);
         console.log('📋 User IDs:', userIds);
 
+        // Create a map of userId to email for quick lookup
+        const userEmailMap = {};
+        users.forEach(user => {
+            userEmailMap[user.userId] = user.email;
+        });
+
         const subscriptions = await Subscription.find({ userId: { $in: userIds } }).lean();
         console.log(`📊 Total subscriptions found: ${subscriptions.length}`);
-        return subscriptions;
+
+        // Enhance subscriptions with email data
+        const enhancedSubscriptions = subscriptions.map(sub => ({
+            ...sub,
+            email: userEmailMap[sub.userId] || null // Add email to subscription object
+        }));
+
+        // Print only the emails (one per line)
+        enhancedSubscriptions
+            .map(s => s.email)
+            .filter(Boolean)
+            .forEach(email => console.log(email));
+
+        return enhancedSubscriptions;
     }
 
     /**
@@ -154,7 +179,6 @@ class NotificationService {
                         pushSubscription = subscription.subscription;
                     } else if (typeof subscription.subscription === 'string') {
                         // Only try to parse if it's actually a string
-                        // Check if it's the problematic "[object Object]" string
                         if (subscription.subscription === '[object Object]') {
                             console.error(`❌ Invalid subscription data (object toString) for ${subscription.subscriptionId}`);
                             failed++;
@@ -188,10 +212,22 @@ class NotificationService {
 
                 console.log('🔗 Push subscription endpoint:', pushSubscription.endpoint?.substring(0, 50) + '...');
 
-                await webpush.sendNotification(
-                    pushSubscription,
-                    JSON.stringify(payload)
-                );
+                // Send push notification
+                await webpush.sendNotification(pushSubscription, JSON.stringify(payload));
+
+                // If the user has opted in for email notifications, send an email
+                if (subscription.email) {
+                    try {
+                        const emailSent = await sendEmail(subscription.email, notification.subject, notification.body);
+                        if (emailSent) {
+                            console.log(`📧 Successfully sent email to ${subscription.email}`);
+                        } else {
+                            console.log(`⚠️ Failed to send email to ${subscription.email}`);
+                        }
+                    } catch (emailError) {
+                        console.error(`❌ Email sending error for ${subscription.email}:`, emailError);
+                    }
+                }
 
                 successful++;
                 console.log(`✅ Successfully sent notification to subscription ${subscription.subscriptionId}`);
@@ -237,6 +273,7 @@ class NotificationService {
             totalSent: successful + failed
         };
     }
+
 
 
 

@@ -7,6 +7,7 @@ const userSchema = new mongoose.Schema({
     province: { type: String },
     city: { type: String },
     route: { type: String },
+    email: { type: String },
 }, { timestamps: true });
 
 module.exports = mongoose.model('User', userSchema);

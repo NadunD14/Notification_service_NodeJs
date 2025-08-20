@@ -11,7 +11,7 @@ const sendNotification = async (req, res) => {
 
     // const token = extractToken(req);  // Extract token using extractToken function
 
-    console.log('Received request to send notification:', req.user.sub);
+    console.log('Received request to send notification:', req.user);
     try {
         const {
             title,

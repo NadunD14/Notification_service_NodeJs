@@ -5,6 +5,7 @@ const router = express.Router();
 const webpush = require('../config/webpush');
 const { v4: uuidv4 } = require('uuid');
 const Subscription = require('../models/Subscription');
+const { verifyToken } = require('../utils/tokenVerification');
 
 function normalizeSubscriptionPayload(body) {
     // Expect either full Web Push subscription or { subscription: {...}, userId }
@@ -17,8 +18,18 @@ function normalizeSubscriptionPayload(body) {
 // Subscribe (persist to MongoDB)
 router.post('/subscribe', async (req, res) => {
     try {
-        const { userId } = req.body; // optional user association
+        const decoded = verifyToken(req, { required: false });
+        req.user = decoded;
+
+        console.log('Authenticated user:', req.user);
+        console.log('User sub field:', req.user?.sub);
+        
+        // Extract userId from the token - 'sub' field typically contains the user ID
+        const userId = req.user?.sub || req.user?.userId || req.user?.id;
+        console.log('Extracted userId:', userId);
+        
         const subscription = normalizeSubscriptionPayload(req.body);
+        console.log('Subscription payload:', req.body);
         if (!subscription) {
             return res.status(400).json({ message: 'Invalid subscription payload' });
         }
@@ -28,6 +39,8 @@ router.post('/subscribe', async (req, res) => {
             userId: userId || 'ANONYMOUS',
             subscription
         });
+        
+        console.log('Created subscription with userId:', userId || 'ANONYMOUS');
         return res.status(200).json({ message: 'Subscription saved', subscriptionId: item.subscriptionId });
     } catch (error) {
         console.error('Error saving subscription:', error);
